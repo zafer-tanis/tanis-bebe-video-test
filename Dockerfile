@@ -4,6 +4,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py .
-RUN useradd --create-home --uid 10001 video
-USER video
+RUN useradd --create-home --uid 10001 tbvideo
+USER tbvideo
 CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${PORT:-10000} --workers 1 --threads 1 --timeout 210 app:app"]
+
