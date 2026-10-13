@@ -6,10 +6,71 @@ from flask import Flask, request, send_file, abort
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 from io import BytesIO
 import secrets
+import base64
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 25 * 1024 * 1024
 Image.MAX_IMAGE_PIXELS = 25_000_000
+
+@app.get('/health')
+def health():
+    return {'ok': True, 'version': '0.2'}
+
+@app.post('/images')
+def stills():
+    key = os.environ.get('VIDEO_TEST_KEY', '')
+    if not key or not secrets.compare_digest(request.form.get('key', ''), key):
+        abort(403)
+    files = request.files.getlist('images')
+    if not 1 <= len(files) <= 10:
+        abort(400)
+    story = request.form.get('format') == 'STORY_IMAGE'
+    sku = request.form.get('sku', '').strip()[:40]
+    title = request.form.get('title', '').strip()[:140]
+    fontfile = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+    font = ImageFont.truetype(fontfile, 30)
+    small = ImageFont.truetype(fontfile, 24)
+    pics = []
+    for upload in files:
+        try:
+            with Image.open(upload.stream) as src:
+                if src.width * src.height > 25_000_000:
+                    abort(400)
+                pics.append(ImageOps.exif_transpose(src).convert('RGB'))
+        except (OSError, Image.DecompressionBombError):
+            abort(400)
+    result = []
+    for group in ([pics] if story else [[pic] for pic in pics]):
+        h = 1920 if story else 1350
+        canvas = Image.new('RGB', (1080, h), 'white')
+        draw = ImageDraw.Draw(canvas)
+        draw.text((65, 65), 'Tanış Bebe', font=font, fill='#222')
+        # Fit actual product title without cropping product images.
+        words = title.split(); lines = []; line = ''
+        for word in words:
+            candidate = (line + ' ' + word).strip()
+            if draw.textlength(candidate, font=small) > 940:
+                lines.append(line); line = word
+            else:
+                line = candidate
+        lines.append(line)
+        for n, text in enumerate(lines[:3]):
+            draw.text((65, 115 + n * 30), text, font=small, fill='#222')
+        cols = 2 if len(group) > 1 else 1
+        rows = (len(group) + cols - 1) // cols
+        cw, ch = 960 // cols, (h - 500) // rows
+        for n, pic in enumerate(group):
+            fitted = ImageOps.contain(pic, (cw - 25, ch - 25))
+            canvas.paste(fitted, (60 + (n % cols) * cw + (cw - fitted.width)//2,
+                                 240 + (n // cols) * ch + (ch - fitted.height)//2))
+        draw.text((65, h - 205), 'Ürün kodu: ' + sku, font=font, fill='#222')
+        draw.text((65, h - 155), 'www.tanisbebe.com.tr', font=font, fill='#222')
+        if story:
+            draw.text((65, h - 105), '#TanışBebe #BebekGiyim #ÇocukGiyim', font=small, fill='#222')
+            draw.text((65, h - 65), '#BebekModası #ÇocukModası', font=small, fill='#222')
+        buffer = BytesIO(); canvas.save(buffer, format='JPEG', quality=90)
+        result.append(base64.b64encode(buffer.getvalue()).decode('ascii'))
+    return {'images': result}
 
 @app.get('/')
 def home():
